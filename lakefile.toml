@@ -1,0 +1,5 @@
+name = "Gem5Lean"
+defaultTargets = ["Gem5Lean"]
+
+[[lean_lib]]
+name = "Gem5Lean"
