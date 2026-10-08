@@ -4,3 +4,8 @@ import Gem5Lean.RV32
 import Gem5Lean.SoC
 import Gem5Lean.SoCTest
 import Gem5Lean.NoC
+import Gem5Lean.Tile
+import Gem5Lean.TileTest
+import Gem5Lean.Fast
+import Gem5Lean.Fast32
+import Gem5Lean.FastTest

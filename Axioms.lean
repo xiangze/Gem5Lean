@@ -13,3 +13,15 @@ open Gem5
 #print axioms Gem5.NoC.moves_bounded
 #print axioms Gem5.NoC.stepNet_none
 #print axioms Gem5.NoC.adaptive_deadlock
+#print axioms Gem5.Tile.mesh_step_refines
+#print axioms Gem5.Tile.mesh_refines
+#print axioms Gem5.Tile.mesh4x4_refines
+#print axioms Gem5.Tile.meshNbr_symm
+#print axioms Gem5.Tile.Test.specRunTbl_eq
+#print axioms Gem5.Fast.fstep_abs
+#print axioms Gem5.Fast.fast_correct
+#print axioms Gem5.Fast.bv_correct_4x4
+#print axioms Gem5.Fast.fmeshStepFast_eq
+#print axioms Gem5.Fast32.step32_abs
+#print axioms Gem5.Fast32.u32_correct_4x4
+#print axioms Gem5.Fast32.mesh32_correct

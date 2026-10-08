@@ -153,18 +153,6 @@ theorem flat_write1 (c : Config) (m0 m1 : Mem) (a v : Word) (h : c.inR0 a = fals
 
 /-! ## 1 回のメモリトランザクション (4 イベント) -/
 
-/-- `run` の分配則 (停止状態は不動点なので一般に成り立つ) -/
-theorem run_add {M} {S : System M} : ∀ (n k : Nat) (s : SimState S), run (n + k) s = run k (run n s)
-  | 0, k, s => by simp [run]
-  | n + 1, k, s => by
-    rw [Nat.add_right_comm]
-    simp only [run]
-    split
-    · rename_i h
-      cases k with
-      | zero => rfl
-      | succ k => simp [run, h]
-    · exact run_add n k _
 
 /-! ## 1 回のメモリトランザクション: CPU → XBar → RAM_i → XBar → (CPU 手前) の 3 イベント -/
 

@@ -3,3 +3,18 @@ defaultTargets = ["Gem5Lean"]
 
 [[lean_lib]]
 name = "Gem5Lean"
+
+[[lean_exe]]
+name = "bench"
+root = "bench.Bench"
+srcDir = "."
+
+[[lean_exe]]
+name = "benchsoc"
+root = "bench.BenchSoC"
+srcDir = "."
+
+[[lean_exe]]
+name = "benchfast"
+root = "bench.BenchFast"
+srcDir = "."

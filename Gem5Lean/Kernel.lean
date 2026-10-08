@@ -61,7 +61,7 @@ structure System (M : Type) where
 /-! ## Event queue -/
 
 structure Event (P M : Type) where
-  time : Tick
+  time : Nat
   port : P
   msg  : M
 
@@ -79,7 +79,7 @@ def schedule {M} (S : System M) (t : Tick) :
   | o :: os, q => schedule S t os (enqueue (mkEv S t o) q)
 
 structure SimState {M} (S : System M) where
-  now   : Tick
+  now   : Nat
   queue : List (Event S.mod.I M)
   st    : S.mod.State
 
@@ -257,5 +257,19 @@ theorem run_wf {M} {S : System M} : ∀ n (s : SimState S), WF s → WF (run n s
     · rename_i s' hs'
       have ⟨h1, h2⟩ := run_wf n s' (step_wf h hs')
       exact ⟨h1, Nat.le_trans (step_mono h hs') h2⟩
+
+
+/-- `run` の分配則 (停止状態は不動点なので一般に成り立つ) -/
+theorem run_add {M} {S : System M} : ∀ (n k : Nat) (s : SimState S), run (n + k) s = run k (run n s)
+  | 0, k, s => by simp [run]
+  | n + 1, k, s => by
+    rw [Nat.add_right_comm]
+    simp only [run]
+    split
+    · rename_i h
+      cases k with
+      | zero => rfl
+      | succ k => simp [run, h]
+    · exact run_add n k _
 
 end Gem5

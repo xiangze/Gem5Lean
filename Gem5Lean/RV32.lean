@@ -5,8 +5,9 @@
 * 命令実行を「レジスタ/PC 更新」と「メモリ操作」に分解した `exec`
 * フラットメモリ上の 1 命令意味論 `isaStep` — これが SoC の仕様になる
 
-対応命令: LUI AUIPC JAL JALR BEQ BNE BLT BGE BLTU BGEU LW SW
+対応命令 (RV32IM): LUI AUIPC JAL JALR BEQ BNE BLT BGE BLTU BGEU LW SW
 ADDI SLTI SLTIU XORI ORI ANDI SLLI SRLI SRAI ADD SUB SLL SLT SLTU XOR SRL SRA OR AND
+MUL MULH MULHSU MULHU DIV DIVU REM REMU
 (LB/LH/SB/SH, FENCE, ECALL 等は `illegal` = 停止)
 -/
 
@@ -28,6 +29,7 @@ def Arch.set (s : Arch) (r : Reg) (v : Word) : Arch :=
 def Mem.write (m : Mem) (a v : Word) : Mem := fun x => if x = a then v else m x
 
 inductive AluOp | add | sub | sll | slt | sltu | xor | srl | sra | or | and
+  | mul | mulh | mulhsu | mulhu | div | divu | rem | remu
   deriving DecidableEq, Repr
 
 inductive BrOp | beq | bne | blt | bge | bltu | bgeu
@@ -57,6 +59,17 @@ def alu : AluOp → Word → Word → Word
   | .sra,  a, b => a.sshiftRight (b.toNat % 32)
   | .or,   a, b => a ||| b
   | .and,  a, b => a &&& b
+  -- RV32M (RISC-V 仕様: 除算は 0 方向への切り捨て、ゼロ除算・オーバーフローは特別扱い)
+  | .mul,    a, b => a * b
+  | .mulh,   a, b => ((a.signExtend 64) * (b.signExtend 64)).extractLsb' 32 32
+  | .mulhsu, a, b => ((a.signExtend 64) * (b.zeroExtend 64)).extractLsb' 32 32
+  | .mulhu,  a, b => ((a.zeroExtend 64) * (b.zeroExtend 64)).extractLsb' 32 32
+  | .div,    a, b => if b = 0 then BitVec.allOnes 32
+                     else if a = BitVec.intMin 32 ∧ b = BitVec.allOnes 32 then a else a.sdiv b
+  | .divu,   a, b => if b = 0 then BitVec.allOnes 32 else a / b
+  | .rem,    a, b => if b = 0 then a
+                     else if a = BitVec.intMin 32 ∧ b = BitVec.allOnes 32 then 0 else a.srem b
+  | .remu,   a, b => if b = 0 then a else a % b
 
 def branchTaken : BrOp → Word → Word → Bool
   | .beq,  a, b => a == b
@@ -123,6 +136,14 @@ def decode (inst : Word) : Instr :=
     | 5, 0x20 => .op .sra rd rs1 rs2
     | 6, 0x00 => .op .or rd rs1 rs2
     | 7, 0x00 => .op .and rd rs1 rs2
+    | 0, 0x01 => .op .mul rd rs1 rs2
+    | 1, 0x01 => .op .mulh rd rs1 rs2
+    | 2, 0x01 => .op .mulhsu rd rs1 rs2
+    | 3, 0x01 => .op .mulhu rd rs1 rs2
+    | 4, 0x01 => .op .div rd rs1 rs2
+    | 5, 0x01 => .op .divu rd rs1 rs2
+    | 6, 0x01 => .op .rem rd rs1 rs2
+    | 7, 0x01 => .op .remu rd rs1 rs2
     | _, _ => .illegal
   | _ => .illegal
 
@@ -183,6 +204,10 @@ def encU (opc rd : Nat) (imm20 : Nat) : Word := (BitVec.ofNat 20 imm20 ++ r rd +
 
 def addi (rd rs1 : Nat) (imm : Int) := encI 0x13 0 rd rs1 imm
 def add (rd rs1 rs2 : Nat) := encR 0 0 rd rs1 rs2
+def mul (rd rs1 rs2 : Nat) := encR 1 0 rd rs1 rs2
+def div (rd rs1 rs2 : Nat) := encR 1 4 rd rs1 rs2
+def rem (rd rs1 rs2 : Nat) := encR 1 6 rd rs1 rs2
+def nop : Word := addi 0 0 0
 def sub (rd rs1 rs2 : Nat) := encR 0x20 0 rd rs1 rs2
 def lw (rd rs1 : Nat) (imm : Int) := encI 0x03 2 rd rs1 imm
 def sw (rs1 rs2 : Nat) (imm : Int) := encS rs1 rs2 imm
@@ -190,6 +215,23 @@ def bne (rs1 rs2 : Nat) (imm : Int) := encB 1 rs1 rs2 imm
 def lui (rd : Nat) (imm20 : Nat) := encU 0x37 rd imm20
 def halt : Word := 0
 end Asm
+
+/-! RISC-V 仕様書の除算テーブル (ゼロ除算・オーバーフロー・符号) の確認 -/
+section MTests
+private def i32 (n : Int) : Word := BitVec.ofInt 32 n
+#guard (alu .div (i32 (-7)) (i32 2)).toInt == -3          -- 0 方向へ切り捨て (Euclid なら -4)
+#guard (alu .rem (i32 (-7)) (i32 2)).toInt == -1          -- 符号は被除数に従う (Euclid なら 1)
+#guard (alu .div (i32 7) (i32 (-2))).toInt == -3
+#guard (alu .rem (i32 7) (i32 (-2))).toInt == 1
+#guard alu .div (i32 5) 0 == BitVec.allOnes 32
+#guard alu .rem (i32 5) 0 == i32 5
+#guard alu .divu (i32 5) 0 == BitVec.allOnes 32
+#guard alu .div (BitVec.intMin 32) (i32 (-1)) == BitVec.intMin 32
+#guard alu .rem (BitVec.intMin 32) (i32 (-1)) == 0
+#guard (alu .mulh (i32 (-1)) (i32 (-1))) == 0
+#guard (alu .mulhu (i32 (-1)) (i32 (-1))) == i32 (-2)
+#guard (alu .mulhsu (i32 (-1)) (i32 (-1))) == i32 (-1)
+end MTests
 
 def loadProgram (prog : List Word) (base : Nat) (m : Mem) : Mem :=
   (prog.zipIdx).foldl (fun m (w, i) => m.write (BitVec.ofNat 32 (base + 4 * i)) w) m
