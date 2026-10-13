@@ -1,0 +1,218 @@
+# sc2lean の既定ルール。
+# 別ファイルを --rules で渡すと、そのファイルの内容がこの上に重ねられる
+# （テーブルはキー単位で上書き、[[stmt_rules]] / [[expr_rules]] は先頭に追加され優先される）。
+#
+# テンプレートの置換子:
+#   {this}   メソッド呼び出しのレシーバを Lean 式に訳したもの
+#   {0} {1}  引数を Lean 式に訳したもの
+#   {raw1}   正規表現ルールのキャプチャ 1 の C++ ソース文字列そのまま
+#   {e1}     正規表現ルールのキャプチャ 1 と同じテキストの部分式を探して Lean 式に訳したもの
+#            （見つからなければ例外）
+#   {n1}     {e1} と同じだが Nat に変換したもの（配列の添字用）
+
+# ---------------------------------------------------------------- 型
+# C++ の型の表記（libclang の canonical spelling）→ Lean の型
+[types]
+"bool" = "Bool"
+"int" = "Int"
+"long long" = "Int"
+"unsigned int" = "UInt32"
+"unsigned long" = "UInt64"
+"unsigned long long" = "UInt64"
+"unsigned char" = "UInt8"
+"unsigned short" = "UInt16"
+"double" = "Nat"                 # 時間の値としてのみ許す（sc_time(10, SC_NS) の 10）
+"sc_core::sc_time" = "Nat"       # 時間は ps 単位の Nat
+"sc_core::sc_time_unit" = "Nat"  # 単位は ps 換算の倍率（[constants] 参照）
+"tlm::tlm_generic_payload" = "Payload"
+"tlm::tlm_command" = "Cmd"
+"tlm::tlm_response_status" = "Status"
+
+# Lean 型ごとの既定値（初期化子のないフィールド・変数）
+[defaults]
+"Bool" = "false"
+"Int" = "0"
+"Nat" = "0"
+"UInt8" = "0"
+"UInt16" = "0"
+"UInt32" = "0"
+"UInt64" = "0"
+"Payload" = "{}"
+"Cmd" = ".ignore"
+"Status" = ".incomplete"
+
+# ---------------------------------------------------------------- 型変換
+# 暗黙・明示のキャストで型が変わるとき。"元->先"。整数リテラルにはそのまま適用しない。
+[conversions]
+"UInt64->UInt32" = "({e}).toUInt32"
+"UInt32->UInt64" = "({e}).toUInt64"
+"UInt8->UInt32" = "({e}).toUInt32"
+"UInt32->UInt8" = "({e}).toUInt8"
+"UInt16->UInt32" = "({e}).toUInt32"
+"UInt32->UInt16" = "({e}).toUInt16"
+"UInt32->Int" = "Int.ofNat ({e}).toNat"
+"UInt64->Int" = "Int.ofNat ({e}).toNat"
+"Int->UInt32" = "UInt32.ofInt ({e})"
+"Int->UInt64" = "UInt64.ofInt ({e})"
+"Int->Nat" = "({e}).toNat"
+"Bool->UInt32" = "(if {e} then 1 else 0 : UInt32)"
+"Bool->Int" = "(if {e} then 1 else 0 : Int)"
+"UInt32->Bool" = "(({e}) != 0)"
+"Int->Bool" = "(({e}) != 0)"
+"UInt8->Bool" = "(({e}) != 0)"
+"UInt64->Bool" = "(({e}) != 0)"
+# 添字（Nat）への変換
+"UInt8->Nat" = "({e}).toNat"
+"UInt16->Nat" = "({e}).toNat"
+"UInt32->Nat" = "({e}).toNat"
+"UInt64->Nat" = "({e}).toNat"
+"Nat->Nat" = "{e}"
+
+# ---------------------------------------------------------------- 演算子
+# 既定の対応。Lean 型ごとの上書きは [ops.<型>]。
+[ops.default]
+"+" = "{a} + {b}"
+"-" = "{a} - {b}"
+"*" = "{a} * {b}"
+"/" = "{a} / {b}"
+"%" = "{a} % {b}"
+"&" = "{a} &&& {b}"
+"|" = "{a} ||| {b}"
+"^" = "{a} ^^^ {b}"
+"<<" = "{a} <<< {b}"
+">>" = "{a} >>> {b}"
+"==" = "{a} == {b}"
+"!=" = "{a} != {b}"
+"<" = "decide ({a} < {b})"
+"<=" = "decide ({a} ≤ {b})"
+">" = "decide ({a} > {b})"
+">=" = "decide ({a} ≥ {b})"
+"&&" = "{a} && {b}"
+"||" = "{a} || {b}"
+"!" = "!{a}"
+"~" = "~~~{a}"
+"neg" = "-{a}"
+
+# C++ の符号付き除算は 0 方向への丸め。Lean の Int./ と % は Euclid 除算なので置き換える。
+[ops.Int]
+"/" = "Int.tdiv {a} {b}"
+"%" = "Int.tmod {a} {b}"
+"<<" = "{a} * 2 ^ ({b}).toNat"
+">>" = "{a} / 2 ^ ({b}).toNat"
+
+# ---------------------------------------------------------------- 定数
+# 列挙子や extern 定数（修飾名）→ Lean 式
+[constants]
+"tlm::TLM_READ_COMMAND" = ".read"
+"tlm::TLM_WRITE_COMMAND" = ".write"
+"tlm::TLM_IGNORE_COMMAND" = ".ignore"
+"tlm::TLM_OK_RESPONSE" = ".ok"
+"tlm::TLM_INCOMPLETE_RESPONSE" = ".incomplete"
+"tlm::TLM_GENERIC_ERROR_RESPONSE" = ".genericError"
+"tlm::TLM_ADDRESS_ERROR_RESPONSE" = ".addressError"
+"tlm::TLM_COMMAND_ERROR_RESPONSE" = ".commandError"
+"tlm::TLM_BURST_ERROR_RESPONSE" = ".burstError"
+"tlm::TLM_BYTE_ENABLE_ERROR_RESPONSE" = ".byteEnableError"
+"sc_core::SC_ZERO_TIME" = "0"
+# 時間単位（ps 換算）
+"sc_core::SC_FS" = "0"
+"sc_core::SC_PS" = "1"
+"sc_core::SC_NS" = "1000"
+"sc_core::SC_US" = "1000000"
+"sc_core::SC_MS" = "1000000000"
+"sc_core::SC_SEC" = "1000000000000"
+
+# ---------------------------------------------------------------- 関数呼び出し（式）
+# 修飾名 → Lean 式。メソッドは {this} がレシーバ。
+[calls.expr]
+"tlm::tlm_generic_payload::get_command" = "{this}.cmd"
+"tlm::tlm_generic_payload::is_read" = "({this}.cmd == .read)"
+"tlm::tlm_generic_payload::is_write" = "({this}.cmd == .write)"
+"tlm::tlm_generic_payload::get_address" = "{this}.addr"
+"tlm::tlm_generic_payload::get_data_length" = "{this}.len"
+"tlm::tlm_generic_payload::get_streaming_width" = "{this}.len"
+"tlm::tlm_generic_payload::get_response_status" = "{this}.status"
+"tlm::tlm_generic_payload::is_response_ok" = "({this}.status == .ok)"
+"tlm::tlm_generic_payload::is_response_error" = "({this}.status != .ok)"
+"sc_core::sc_time::sc_time" = "({0} * {1})"      # sc_time(v, unit) → ps
+"sc_core::sc_time::operator+" = "{this} + {0}"
+
+# ---------------------------------------------------------------- 関数呼び出し（文）
+# 値は「レシーバに新しく代入する値」。"skip" なら何もしない。
+[calls.stmt]
+"tlm::tlm_generic_payload::set_command" = "{ {this} with cmd := {0} }"
+"tlm::tlm_generic_payload::set_read" = "{ {this} with cmd := .read }"
+"tlm::tlm_generic_payload::set_write" = "{ {this} with cmd := .write }"
+"tlm::tlm_generic_payload::set_address" = "{ {this} with addr := {0} }"
+"tlm::tlm_generic_payload::set_data_length" = "{ {this} with len := {0} }"
+"tlm::tlm_generic_payload::set_response_status" = "{ {this} with status := {0} }"
+"tlm::tlm_generic_payload::set_streaming_width" = "skip"
+"tlm::tlm_generic_payload::set_byte_enable_ptr" = "skip"
+"tlm::tlm_generic_payload::set_byte_enable_length" = "skip"
+"tlm::tlm_generic_payload::set_dmi_allowed" = "skip"
+"sc_core::sc_time::operator+=" = "{this} + {0}"
+
+# ---------------------------------------------------------------- データポインタの定型句
+# 正規表現は文・式の「正規化テキスト」に完全一致させる。正規化テキストはトークンを
+# 詰めて並べたもので、識別子どうしの間にだけ空白が 1 個入る（文末の ; は含まない）。
+#   例: memcpy(trans.get_data_ptr(),&mem[addr/4],4)
+#       reinterpret_cast<unsigned char*>(&data)
+# action:
+#   "assign"         lhs（{rawN} で組み立てた C++ の左辺テキスト）に lean の値を代入
+#   "lean"           lean をそのまま 1 行の Lean 文として出す
+#   "skip"           何も出さない
+#   "bind_data_ptr"  キャプチャ 1 の payload のデータポインタを、キャプチャ 2 の変数に結びつける。
+#                    b_transport を送る直前に payload.data := 変数、応答が戻ったら 変数 := payload.data
+[[stmt_rules]]
+name = "memcpy: payload <- mem[i]"
+match = 'memcpy\((\w+)\.get_data_ptr\(\),&(\w+\[.+\]),(?:4|sizeof\(uint32_t\))\)'
+action = "assign"
+lhs = "{raw1}"
+lean = "{ {e1} with data := {e2} }"
+
+[[stmt_rules]]
+name = "memcpy: mem[i] <- payload"
+match = 'memcpy\(&(\w+\[.+\]),(\w+)\.get_data_ptr\(\),(?:4|sizeof\(uint32_t\))\)'
+action = "assign"
+lhs = "{raw1}"
+lean = "{e2}.data"
+
+[[stmt_rules]]
+name = "set_data_ptr(reinterpret_cast<unsigned char*>(&v))"
+match = '(\w+)\.set_data_ptr\(reinterpret_cast<unsigned char\*>\(&(\w+)\)\)'
+action = "bind_data_ptr"
+
+[[stmt_rules]]
+name = "set_data_ptr((unsigned char*)&v)"
+match = '(\w+)\.set_data_ptr\(\(unsigned char\*\)&(\w+)\)'
+action = "bind_data_ptr"
+
+[[expr_rules]]
+name = "*reinterpret_cast<uint32_t*>(p.get_data_ptr())"
+match = '\*reinterpret_cast<uint32_t\*>\((\w+)\.get_data_ptr\(\)\)'
+lean = "{e1}.data"
+type = "UInt32"
+
+[[expr_rules]]
+name = "*(uint32_t*)p.get_data_ptr()"
+match = '\*\(uint32_t\*\)(\w+)\.get_data_ptr\(\)'
+lean = "{e1}.data"
+type = "UInt32"
+
+# ---------------------------------------------------------------- 出力の前置き
+[lean]
+prelude = '''
+inductive Cmd | read | write | ignore
+  deriving Repr, BEq, DecidableEq, Inhabited
+inductive Status | ok | incomplete | genericError | addressError | commandError
+  | burstError | byteEnableError
+  deriving Repr, BEq, DecidableEq, Inhabited
+/-- TLM generic payload のうちワード単位のデータ転送に必要な部分 -/
+structure Payload where
+  cmd    : Cmd    := .ignore
+  addr   : UInt64 := 0
+  data   : UInt32 := 0
+  len    : UInt32 := 0
+  status : Status := .incomplete
+  deriving Repr, BEq, Inhabited
+'''

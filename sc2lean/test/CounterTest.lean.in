@@ -1,0 +1,9 @@
+-- 簡易テスト: tick を 7 回配送すると count は 5 で一周して 2、wrapped は 1 回
+def runTicks : Nat → Counter.St × Nat → Counter.St × Nat
+  | 0, x => x
+  | n + 1, (s, w) =>
+    let (s', out) := Counter.step s .ev_tick
+    runTicks n (s', w + (out.filter (fun p => match p.2 with | .ev_wrapped => true | _ => false)).length)
+#guard (runTicks 7 (Counter.init, 0)).1.count == 2
+#guard (runTicks 7 (Counter.init, 0)).2 == 1
+#guard (runTicks 7 (Counter.init, 0)).1.odd == 1

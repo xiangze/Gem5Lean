@@ -1,0 +1,61 @@
+// sc2lean 用の最小 SystemC スタブ。
+// 本物の SystemC ヘッダの代わりに libclang に読ませ、AST を安定して得るためのもの。
+// 制約サブセットで使う API だけを宣言している（ここに無い API を使うと構文解析エラーになる）。
+#pragma once
+#include <cstdint>
+#include <cstring>
+
+namespace sc_dt {
+  typedef unsigned long long uint64;
+  typedef long long int64;
+}
+
+namespace sc_core {
+  enum sc_time_unit { SC_FS, SC_PS, SC_NS, SC_US, SC_MS, SC_SEC };
+
+  struct sc_time {
+    sc_time();
+    sc_time(double v, sc_time_unit u);
+    sc_time operator+(const sc_time&) const;
+    sc_time& operator+=(const sc_time&);
+    bool operator<(const sc_time&) const;
+    bool operator==(const sc_time&) const;
+  };
+  extern const sc_time SC_ZERO_TIME;
+
+  struct sc_event {
+    sc_event();
+    explicit sc_event(const char*);
+    void notify();
+    void notify(const sc_time&);
+    void notify(double v, sc_time_unit u);
+  };
+
+  struct sc_module_name { sc_module_name(const char*); };
+
+  struct sc_sensitive {
+    sc_sensitive& operator<<(sc_event&);
+  };
+
+  struct sc_module {
+    sc_sensitive sensitive;
+    void wait();
+    void wait(sc_event&);
+    void wait(const sc_time&);
+    void wait(double v, sc_time_unit u);
+    void next_trigger(const sc_time&);
+  };
+
+  // プロセス登録はマーカー関数の呼び出しに展開する（sc2lean が拾う）
+  void __sc2lean_thread(const char*);
+  void __sc2lean_method(const char*);
+  void __sc2lean_dont_initialize();
+  void sc_stop();
+}
+
+#define SC_MODULE(n) struct n : ::sc_core::sc_module
+#define SC_CTOR(n) n(::sc_core::sc_module_name)
+#define SC_HAS_PROCESS(n)
+#define SC_THREAD(f) ::sc_core::__sc2lean_thread(#f)
+#define SC_METHOD(f) ::sc_core::__sc2lean_method(#f)
+#define dont_initialize() ::sc_core::__sc2lean_dont_initialize()

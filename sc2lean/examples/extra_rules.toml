@@ -1,0 +1,10 @@
+# 利用者が追加するルールの例。--rules examples/extra_rules.toml で読み込む。
+[calls.expr]
+"parity" = "parity32 {0}"
+
+[lean]
+extra = '''
+/-- プロジェクト独自の関数 parity の Lean 版 -/
+def parity32 (x : UInt32) : UInt32 :=
+  (List.range 32).foldl (fun acc i => acc ^^^ ((x >>> i.toUInt32) &&& 1)) 0
+'''

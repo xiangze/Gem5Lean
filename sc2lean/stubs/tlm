@@ -1,0 +1,40 @@
+// sc2lean 用の最小 TLM-2.0 スタブ（generic payload と b_transport のみ）
+#pragma once
+#include <systemc>
+
+namespace tlm {
+  enum tlm_command { TLM_READ_COMMAND, TLM_WRITE_COMMAND, TLM_IGNORE_COMMAND };
+  enum tlm_response_status {
+    TLM_OK_RESPONSE = 1, TLM_INCOMPLETE_RESPONSE = 0,
+    TLM_GENERIC_ERROR_RESPONSE = -1, TLM_ADDRESS_ERROR_RESPONSE = -2,
+    TLM_COMMAND_ERROR_RESPONSE = -3, TLM_BURST_ERROR_RESPONSE = -4,
+    TLM_BYTE_ENABLE_ERROR_RESPONSE = -5
+  };
+
+  struct tlm_generic_payload {
+    tlm_generic_payload();
+    tlm_command get_command() const;
+    void set_command(tlm_command);
+    bool is_read() const;
+    bool is_write() const;
+    void set_read();
+    void set_write();
+    sc_dt::uint64 get_address() const;
+    void set_address(sc_dt::uint64);
+    unsigned char* get_data_ptr() const;
+    void set_data_ptr(unsigned char*);
+    unsigned int get_data_length() const;
+    void set_data_length(unsigned int);
+    unsigned int get_streaming_width() const;
+    void set_streaming_width(unsigned int);
+    unsigned char* get_byte_enable_ptr() const;
+    void set_byte_enable_ptr(unsigned char*);
+    unsigned int get_byte_enable_length() const;
+    void set_byte_enable_length(unsigned int);
+    void set_dmi_allowed(bool);
+    tlm_response_status get_response_status() const;
+    void set_response_status(tlm_response_status);
+    bool is_response_ok() const;
+    bool is_response_error() const;
+  };
+}
