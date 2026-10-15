@@ -1,4 +1,5 @@
 -- sc2lean で自動生成。手で編集する場合は生成元とルールも合わせて更新すること。
+set_option linter.unusedVariables false
 
 inductive Cmd | read | write | ignore
   deriving Repr, BEq, DecidableEq, Inhabited

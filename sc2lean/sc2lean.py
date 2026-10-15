@@ -24,7 +24,14 @@ import argparse
 import os
 import re
 import sys
-import tomllib
+
+try:  # Python 3.11+
+    import tomllib as _toml_bin
+except ModuleNotFoundError:  # 3.10 以前: pip install tomli（tomllib と同じ API）
+    try:
+        import tomli as _toml_bin
+    except ModuleNotFoundError:
+        _toml_bin = None
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -82,6 +89,19 @@ def _merge(base: dict, extra: dict) -> dict:
     return out
 
 
+def load_toml(p: Path) -> dict:
+    """tomllib / tomli はバイナリモード、toml パッケージはテキストモードで読む。"""
+    if _toml_bin is not None:
+        with open(p, "rb") as f:
+            return _toml_bin.load(f)
+    try:
+        import toml
+    except ModuleNotFoundError:
+        raise SystemExit("sc2lean: TOML ライブラリがありません。pip install tomli（または toml）してください")
+    with open(p, encoding="utf-8") as f:
+        return toml.load(f)
+
+
 @dataclass
 class Rules:
     data: dict
@@ -91,8 +111,7 @@ class Rules:
         data: dict = {}
         files = ([HERE / "rules" / "default.toml"] if use_default else []) + list(paths)
         for p in files:
-            with open(p, "rb") as f:
-                data = _merge(data, tomllib.load(f))
+            data = _merge(data, load_toml(Path(p)))
         r = cls(data)
         r._compile()
         return r
@@ -218,6 +237,25 @@ def is_literal(c: ci.Cursor) -> bool:
     return False
 
 
+def source_text(c: ci.Cursor) -> str:
+    """コメント用のソース表記。マクロ展開されたものはトークンが取れないので行を使う。"""
+    t = norm_text(c)
+    if t:
+        return t
+    try:
+        return Path(c.location.file.name).read_text(errors="replace").splitlines()[c.location.line - 1].strip()
+    except (OSError, IndexError, AttributeError):
+        return ""
+
+
+def definition_of(decl: ci.Cursor) -> ci.Cursor:
+    """メソッド宣言から本体つきの定義を探す（クラス外定義に対応）。同じ翻訳単位にないと例外。"""
+    d = decl.get_definition()
+    if d is None:
+        raise Unsupported(f"{decl.spelling} の本体が見つかりません（実装の .cpp を入力に渡してください）", decl)
+    return d
+
+
 def indent(lines: list[str], n: int = 2) -> list[str]:
     return [" " * n + l for l in lines]
 
@@ -313,6 +351,10 @@ class Translator:
         types = self.rules.table("types")
         if key in types:
             return types[key]
+        ct = ctype(t)
+        if ct.kind == ci.TypeKind.ENUM:
+            # ルールのない列挙型は C++ と同じく基底の整数型として扱う
+            return self.lean_type(ct.get_declaration().enum_type, where)
         raise Unsupported(f"型 '{key}' の対応ルールがありません（[types] に追加してください）", where)
 
     def default_of(self, ty: str, where: ci.Cursor) -> str:
@@ -324,6 +366,9 @@ class Translator:
     def convert(self, code: str, src: str, dst: str, c: ci.Cursor) -> str:
         if src == dst:
             return code
+        numeric = ("Int", "Nat", "UInt8", "UInt16", "UInt32", "UInt64")
+        if re.fullmatch(r"\(?\d+\)?", code) and src in numeric and dst in numeric:
+            return code  # 整数リテラル（列挙子や定数を展開したもの）は型を問わない
         if is_literal(c) and dst not in ("Bool",) and src in ("Int", "Nat", "UInt8", "UInt16", "UInt32", "UInt64"):
             return code
         conv = self.rules.table("conversions")
@@ -497,7 +542,16 @@ class Translator:
             consts = self.rules.table("constants")
             if q in consts:
                 return consts[q], self.lean_type(c.type, c)
-            raise Unsupported(f"定数 '{q}' のルールがありません（[constants] に追加してください）", c)
+            if ref.kind == K.ENUM_CONSTANT_DECL:
+                return str(ref.enum_value), self.lean_type(ref.type, c)
+            init = [ch for ch in ref.get_children() if ch.kind not in (K.TYPE_REF, K.NAMESPACE_REF, K.TEMPLATE_REF)]
+            if ctype(ref.type).is_const_qualified() and init and ref.semantic_parent.kind in (
+                    K.TRANSLATION_UNIT, K.NAMESPACE, K.STRUCT_DECL, K.CLASS_DECL):
+                ty = self.lean_type(ref.type, c)
+                code, _ = self.expr(init[0], Ctx("helper", ctx.module), ty)
+                return self.paren(code), ty
+            raise Unsupported(f"定数 '{q}' のルールがありません（const で初期化式のある定数は自動展開します。"
+                              f"それ以外は [constants] に追加してください）", c)
         raise Unsupported(f"'{c.spelling}'（{ref.kind.name}）への参照は扱えません", c)
 
     def is_this_member(self, c: ci.Cursor) -> bool:
@@ -558,7 +612,7 @@ class Translator:
         if ref.kind == K.CXX_METHOD and ref.semantic_parent == ctx.module.cursor and (recv is None or self.is_this_member_base(recv)):
             if ref.result_type.kind == ci.TypeKind.VOID:
                 raise Unsupported(f"void のヘルパメソッド {ref.spelling} は扱えません（呼び出し元に展開してください）", c)
-            self.helpers_needed[ref.spelling] = ref
+            self.helpers_needed[ref.spelling] = definition_of(ref)
             ps = []
             for a, p in zip(args, ref.get_arguments()):
                 ps.append(self.paren(self.expr(a, ctx, self.lean_type(p.type, p))[0]))
@@ -822,6 +876,10 @@ class Translator:
         if tmpl is not None:
             if tmpl == "skip":
                 return []
+            if tmpl == "comment":
+                return [f"pure ()  -- {source_text(c)}"]
+            if tmpl == "stop":
+                return ["out := out ++ [(0, .stop)]"]
             if recv is None:
                 raise Unsupported(f"{q} のレシーバがありません", c)
             code = tmpl.replace("{this}", self.paren(self.expr(recv, ctx)[0]))
@@ -842,12 +900,11 @@ class Translator:
             elif k == K.CONSTRUCTOR:
                 if mod.ctor is not None:
                     raise Unsupported("コンストラクタは 1 つだけにしてください", ch)
-                mod.ctor = ch
+                mod.ctor = definition_of(ch)
             elif k == K.CXX_METHOD:
-                if ch.is_definition():
-                    mod.methods[ch.spelling] = ch
-                else:
-                    raise Unsupported(f"メソッド {ch.spelling} はクラス内で定義してください", ch)
+                if ch.spelling in mod.methods:
+                    raise Unsupported(f"メソッド {ch.spelling} のオーバーロードは扱えません", ch)
+                mod.methods[ch.spelling] = definition_of(ch)
             elif k == K.DESTRUCTOR:
                 continue
             else:
@@ -887,7 +944,7 @@ class Translator:
         body = None
         pending_member = None
         for ch in ctor.get_children():
-            if ch.kind == K.PARM_DECL:
+            if ch.kind in (K.PARM_DECL, K.TYPE_REF, K.NAMESPACE_REF):
                 continue
             if ch.kind == K.MEMBER_REF:
                 pending_member = ch.spelling
@@ -1309,36 +1366,54 @@ def parse(path: Path, extra_args: list[str]) -> ci.TranslationUnit:
     errs = [d for d in tu.diagnostics if d.severity >= ci.Diagnostic.Error]
     if errs:
         msg = "\n".join(f"{d.location.file}:{d.location.line}:{d.location.column}: {d.spelling}" for d in errs)
-        raise ParseError("C++ の構文解析に失敗しました（スタブにない API を使っていませんか）:\n" + msg)
+        hint = ""
+        if any("file not found" in d.spelling for d in errs):
+            hint = ("\n  標準ライブラリと SystemC は本物のヘッダではなく stubs/ の最小ヘッダで解析します。"
+                    "\n  自分のヘッダなら -I でディレクトリを指定し、標準ヘッダなら stubs/ に最小の宣言を足してください。")
+        raise ParseError("C++ の構文解析に失敗しました（スタブにない API を使っていませんか）:\n" + msg + hint)
     return tu
 
 
-def find_modules(tu: ci.TranslationUnit, path: Path) -> list[ci.Cursor]:
+def is_stub(f) -> bool:
+    return f is not None and os.path.realpath(f.name).startswith(str(HERE / "stubs") + os.sep)
+
+
+def is_module_class(c: ci.Cursor) -> bool:
+    for b in c.get_children():
+        if b.kind == K.CXX_BASE_SPECIFIER and b.referenced is not None and qualname(b.referenced) == "sc_core::sc_module":
+            return True
+    return False
+
+
+def module_complete(cls: ci.Cursor) -> bool:
+    """コンストラクタとメソッドの本体がすべてこの翻訳単位にあるか"""
+    return all(ch.get_definition() is not None for ch in cls.get_children()
+               if ch.kind in (K.CONSTRUCTOR, K.CXX_METHOD))
+
+
+def find_modules(tu: ci.TranslationUnit, path: Path, notes: list) -> list[ci.Cursor]:
+    """入力ファイルと、そこから読まれる自分のヘッダ（stubs/ 以外）にある sc_module を集める。
+    ヘッダにあって本体がこの入力にないモジュールは変換せず notes に記録する。
+    モジュール以外の宣言（定数、enum、関数宣言、普通のクラスなど）は、使われたときに処理する。"""
     mods = []
     main = os.path.realpath(str(path))
 
     def walk(c):
         for ch in c.get_children():
-            if ch.location.file is None or os.path.realpath(ch.location.file.name) != main:
+            f = ch.location.file
+            if f is None or is_stub(f):
                 continue
-            if ch.kind in (K.STRUCT_DECL, K.CLASS_DECL) and ch.is_definition():
-                bases = [b for b in ch.get_children() if b.kind == K.CXX_BASE_SPECIFIER]
-                if any(qualname(b.referenced) == "sc_core::sc_module" for b in bases if b.referenced):
+            in_main = os.path.realpath(f.name) == main
+            if ch.kind in (K.NAMESPACE, K.LINKAGE_SPEC):
+                walk(ch)
+            elif ch.kind in (K.STRUCT_DECL, K.CLASS_DECL) and ch.is_definition() and is_module_class(ch):
+                if in_main or module_complete(ch):
                     mods.append(ch)
-                    continue
-                raise Unsupported(f"sc_module でないクラス {ch.spelling} は扱えません", ch)
-            elif ch.kind == K.NAMESPACE:
-                walk(ch)
-            elif ch.kind in (K.USING_DIRECTIVE, K.USING_DECLARATION, K.TYPEDEF_DECL, K.TYPE_ALIAS_DECL):
-                continue
-            elif ch.kind == K.FUNCTION_DECL and ch.spelling == "sc_main":
-                continue
-            elif ch.kind == K.FUNCTION_DECL and not ch.is_definition():
-                continue  # 宣言だけ。呼び出し側で [calls.expr] のルールが必要
-            elif ch.kind == K.LINKAGE_SPEC:
-                walk(ch)
-            else:
-                raise Unsupported(f"トップレベルの {ch.kind.name} は扱えません", ch)
+                else:
+                    notes.append((ch.get_usr(), f"{f.name}: モジュール {ch.spelling} は本体が入力にないので変換しません"
+                                                " （実装の .cpp も入力に渡してください）"))
+            elif ch.kind == K.CLASS_TEMPLATE and is_module_class(ch):
+                raise Unsupported(f"テンプレートのモジュール {ch.spelling} は扱えません", ch)
     walk(tu.cursor)
     return mods
 
@@ -1357,16 +1432,22 @@ def main(argv=None) -> int:
     rules = Rules.load(a.rules, use_default=not a.no_default_rules)
     tr = Translator(rules, keep_going=a.keep_going)
     extra = [f"-I{d}" for d in a.incdirs] + [f"-D{d}" for d in a.defines]
-    out = ["-- sc2lean で自動生成。手で編集する場合は生成元とルールも合わせて更新すること。", ""]
+    out = ["-- sc2lean で自動生成。手で編集する場合は生成元とルールも合わせて更新すること。",
+           "set_option linter.unusedVariables false", ""]
     out.append(rules.table("lean").get("prelude", "").strip())
     out.append("")
     extra_prelude = rules.table("lean").get("extra", "").strip()
     if extra_prelude:
         out += [extra_prelude, ""]
+    notes: list[tuple[str, str]] = []
+    seen: set[str] = set()
     try:
         for p in a.inputs:
             tu = parse(p, extra)
-            for cls in find_modules(tu, p):
+            for cls in find_modules(tu, p, notes):
+                if cls.get_usr() in seen:
+                    continue  # 複数の .cpp から読まれたヘッダのモジュール
+                seen.add(cls.get_usr())
                 mod = tr.analyze(cls)
                 text = tr.guard(tr.gen_module, mod, placeholder="")
                 out.append(text)
@@ -1374,6 +1455,11 @@ def main(argv=None) -> int:
     except (Unsupported, ParseError) as e:
         print(f"sc2lean: {e}", file=sys.stderr)
         return 1
+    reported = set()
+    for usr, n in notes:
+        if usr not in seen and usr not in reported:  # 別の入力で変換できたものは除く
+            reported.add(usr)
+            print(f"sc2lean: 注意: {n}", file=sys.stderr)
     if tr.errors:
         for e in tr.errors:
             print(e.format(), file=sys.stderr)

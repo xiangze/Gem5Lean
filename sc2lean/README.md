@@ -4,7 +4,8 @@ libclang で C++ を解析し、TOML のルールに従って Lean 4 のイベ�
 ルールにない記述に出会うと、ソース位置つきの例外 `Unsupported` を出して止まります。
 
 ```
-pip install libclang            # Python 3.11 以上（tomllib を使用）
+pip install libclang            # Python 3.9 以上
+pip install tomli               # Python 3.10 以前のみ（toml パッケージでも可）
 python3 sc2lean.py examples/memory.cpp examples/initiator.cpp -o Out.lean
 python3 sc2lean.py foo.cpp -r my_rules.toml -r more.toml   # ルールの追加
 python3 sc2lean.py -k foo.cpp   # 未対応箇所を全部集めてから失敗する
@@ -14,6 +15,20 @@ LEAN=/path/to/lean ./run_tests.sh
 SystemC 本体は不要です。`stubs/` の最小ヘッダ（`-nostdinc` で解析）を使うため、
 スタブにない API を使うと構文解析の段階でエラーになります。これも「想定外の記述」の検出として働きます。
 スタブを足すか、`-I` で別のスタブを先に読ませれば拡張できます。
+
+## 入力するファイル
+
+渡すのは **モジュールの実装がある .cpp（または .h）だけ** です。
+
+- `#include` されるヘッダは libclang が自動で読みます。`"mem.h"` のように同じディレクトリにあるものはそのまま見つかり、別ディレクトリのものは `-I` で指定します。依存ファイルを入力に並べる必要はありません。
+- SystemC と標準ライブラリは、本物のヘッダではなく `stubs/` の最小ヘッダで解析します。**SystemC のインクルードパスは渡さないでください**（渡すとスタブより優先されて解析が壊れます）。スタブにある標準ヘッダは `<cstdint> <cstring> <iostream> <cassert> <cstdio>` だけです。それ以外（`<vector>` など）を include していると file not found になるので、`stubs/` に最小の宣言を足してください。
+- 宣言を .h、本体を .cpp に分けた構成では、**.cpp を渡します**。クラス外で定義したメソッドやコンストラクタは、同じ翻訳単位の中から探します。
+- 変換するのは、入力ファイルと、そこから読まれる自分のヘッダにある `sc_module` です。ヘッダにあるモジュールでも、本体がその入力にないもの（`top.cpp` が `mem.h` を読むだけ、など）は変換せず、注意を表示します。複数の入力から同じモジュールが見えても、変換は 1 回だけです。
+- ヘッダの `static const` 定数は、初期化式を展開します。ルールのない enum は、基底の整数型と値として扱います。
+
+```
+python3 sc2lean.py src/top.cpp src/mem.cpp src/initiator.cpp -I include -o Model.lean
+```
 
 ## 生成物
 
@@ -62,9 +77,13 @@ SystemC 本体は不要です。`stubs/` の最小ヘッダ（`-nostdinc` で解
 
 利用者ルールの例は `examples/extra_rules.toml` です。プロジェクト独自の関数 `parity` を Lean 関数に対応させ、その定義を `[lean] extra` で出力に足しています。
 
+`[calls.stmt]` の値には特殊値があります。`"skip"`（何もしない）、`"comment"`（Lean のコメントとして残す）、`"stop"`（`.stop` を送る）です。
+既定ルールでは、`std::cout << ...`、`printf`、`SC_REPORT_INFO/WARNING` を `skip`、`sc_assert` / `assert` を `comment` にしています。
+`SC_REPORT_ERROR/FATAL` は、SystemC では既定で例外を投げて以降を実行しないので、既定では未対応（例外）にしています。必要なら `examples/split/report_rules.toml` のようにルールで指定してください。
+
 ## 例外になる主な記述
 
-ポインタ（フィールド、`&` / `*`、配列の減衰）、`switch`、`if`・ループの中の `wait`、ターゲット側 `b_transport` や SC_METHOD の中の `wait`、`next_trigger`、`continue` を含む `for`、初期化文つきの `if`、ローカル配列、`static` ローカル、ルールのない型・関数・定数・型変換、sc_module 以外のクラス、自由関数の定義、`sc_signal` / `sc_in` / `sc_out`、nb_transport、DMI。
+ポインタ（フィールド、`&` / `*`、配列の減衰）、`switch`、`if`・ループの中の `wait`、ターゲット側 `b_transport` や SC_METHOD の中の `wait`、`next_trigger`、`continue` を含む `for`、初期化文つきの `if`、ローカル配列、`static` ローカル、ルールのない型・関数・定数・型変換、テンプレートのモジュール、メソッドのオーバーロード、本体が入力にないメソッド、ルールのない自由関数の呼び出し、const でないグローバル変数、`sc_signal` / `sc_in` / `sc_out`、nb_transport、DMI。
 メッセージには、どのテーブルにルールを足せばよいかが出ます。
 
 ## 割り切り

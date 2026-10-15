@@ -1,0 +1,10 @@
+// sc2lean: <iostream> の最小スタブ。出力は [calls.stmt] の "std::ostream::operator<<" = "skip" で捨てる。
+#pragma once
+namespace std {
+  struct ostream {
+    template <class T> ostream& operator<<(const T&);
+  };
+  extern ostream cout, cerr, clog;
+  struct __sc2lean_manip {};
+  extern __sc2lean_manip endl, hex, dec, flush;
+}

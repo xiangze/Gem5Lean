@@ -1,0 +1,3 @@
+# SC_REPORT_ERROR をシミュレーション停止として扱う利用者ルールの例
+[calls.stmt]
+"sc_core::sc_report_error" = "stop"

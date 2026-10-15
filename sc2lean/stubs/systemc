@@ -51,6 +51,13 @@ namespace sc_core {
   void __sc2lean_method(const char*);
   void __sc2lean_dont_initialize();
   void sc_stop();
+
+  // レポートとアサーション（扱いは [calls.stmt] のルールで決める）
+  void sc_report_info(const char*, const char*);
+  void sc_report_warning(const char*, const char*);
+  void sc_report_error(const char*, const char*);
+  void sc_report_fatal(const char*, const char*);
+  void sc_assert_(bool);
 }
 
 #define SC_MODULE(n) struct n : ::sc_core::sc_module
@@ -59,3 +66,8 @@ namespace sc_core {
 #define SC_THREAD(f) ::sc_core::__sc2lean_thread(#f)
 #define SC_METHOD(f) ::sc_core::__sc2lean_method(#f)
 #define dont_initialize() ::sc_core::__sc2lean_dont_initialize()
+#define SC_REPORT_INFO(id, msg) ::sc_core::sc_report_info(id, msg)
+#define SC_REPORT_WARNING(id, msg) ::sc_core::sc_report_warning(id, msg)
+#define SC_REPORT_ERROR(id, msg) ::sc_core::sc_report_error(id, msg)
+#define SC_REPORT_FATAL(id, msg) ::sc_core::sc_report_fatal(id, msg)
+#define sc_assert(x) ::sc_core::sc_assert_(x)

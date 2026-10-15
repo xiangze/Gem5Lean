@@ -1,0 +1,10 @@
+
+-- 簡易テスト: 書いて読む、範囲外アクセスはエラー応答で errors が増える
+def wr : Payload := { cmd := .write, addr := 8, data := 42, len := 4 }
+def rd : Payload := { cmd := .read, addr := 8, len := 4 }
+def s1 := (SplitMem.step SplitMem.init (.socket_req wr)).1
+def r2 := SplitMem.step s1 (.socket_req rd)
+#guard match r2.2 with | [(0, .socket_resp p d)] => p.data == 42 && p.status == .ok && d == 20000 | _ => false
+def r3 := SplitMem.step s1 (.socket_req { rd with addr := 4096 })
+#guard r3.1.errors == 1
+#guard match r3.2 with | [(0, .socket_resp p _)] => p.status == .addressError | _ => false

@@ -151,6 +151,14 @@
 "tlm::tlm_generic_payload::set_byte_enable_length" = "skip"
 "tlm::tlm_generic_payload::set_dmi_allowed" = "skip"
 "sc_core::sc_time::operator+=" = "{this} + {0}"
+# 特殊値: "skip" 何もしない / "comment" Lean のコメントとして残す / "stop" .stop を送る
+"std::ostream::operator<<" = "skip"
+"printf" = "skip"
+"sc_core::sc_report_info" = "skip"
+"sc_core::sc_report_warning" = "skip"
+"sc_core::sc_assert_" = "comment"
+# sc_report_error / sc_report_fatal は既定では未対応（例外）。SystemC では既定で例外を投げて
+# 以降を実行しないため、"skip" にすると意味が変わる。必要なら利用者ルールで "stop" などを指定する。
 
 # ---------------------------------------------------------------- データポインタの定型句
 # 正規表現は文・式の「正規化テキスト」に完全一致させる。正規化テキストはトークンを
